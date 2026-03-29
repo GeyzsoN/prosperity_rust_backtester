@@ -71,11 +71,31 @@ pub fn workspace_root() -> PathBuf {
 }
 
 fn resolve_project_root() -> PathBuf {
+    if let Ok(root) = std::env::var("PROSPERITY_ROOT") {
+        let path = PathBuf::from(root);
+        if path.is_dir() {
+            return path;
+        }
+    }
+
     if let Ok(current_dir) = std::env::current_dir() {
         if let Some(root) = find_project_root(&current_dir) {
             return root;
         }
+        if let Ok(entries) = std::fs::read_dir(&current_dir) {
+            for entry in entries.flatten() {
+                let child = entry.path();
+                if child.is_dir() {
+                    if let Some(root) = find_project_root(&child) {
+                        if is_backtester_root(&root) {
+                            return root;
+                        }
+                    }
+                }
+            }
+        }
     }
+
     if let Ok(current_exe) = std::env::current_exe() {
         if let Some(parent) = current_exe.parent() {
             if let Some(root) = find_project_root(parent) {
@@ -83,7 +103,12 @@ fn resolve_project_root() -> PathBuf {
             }
         }
     }
+
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn is_backtester_root(path: &Path) -> bool {
+    path.join("datasets").is_dir() && path.join("traders").is_dir()
 }
 
 fn find_project_root(start: &Path) -> Option<PathBuf> {

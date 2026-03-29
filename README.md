@@ -126,6 +126,7 @@ make submission ROUND=round1
 make round3 TRADER=traders/latest_trader.py
 make round2 PERSIST=1
 make tutorial FLAT=1
+make tutorial CARRY=1
 ```
 
 Supported input formats:
@@ -178,6 +179,7 @@ Behavior:
 - `metrics.json` is always written under `runs/<backtest-id>/`
 - default fast runs also write `submission.log` under `runs/<backtest-id>/`
 - use `--artifact-mode` to choose which extra artifacts are written
+- use `--carry` or `CARRY=1` to carry positions, own trades, market trades, and trader state across non-submission day datasets in the same round
 - use `--flat` or `FLAT=1` to place multi-run outputs in a single directory with dataset/day-prefixed filenames
 - use `--persist` or `PERSIST=1` to write the full replay artifact set under `runs/`
 - persisted multi-day or multi-file runs also write one combined bundle at `runs/<backtest-id>/`, including `combined.log` and `manifest.json`
@@ -218,6 +220,14 @@ Flat layout behavior:
 - `--flat` only changes multi-run layouts; single-run outputs stay unchanged
 - multi-run outputs are written into `runs/<backtest-id>/` with prefixed filenames such as `tutorial-day-2-submission.log` and `tutorial-day-2-metrics.json`
 - when `--flat` is combined with `--persist`, the same directory also includes `combined.log` and `manifest.json`
+
+Carry mode behavior:
+
+- `--carry` only applies to non-submission day datasets; submission datasets remain separate runs
+- with `--carry`, consecutive day datasets in the same round are merged into one connected replay ordered by `(day, timestamp)`
+- positions, prior own trades, prior market trades, and trader data are carried across those merged day boundaries
+- carry mode also normalizes timestamps into one continuous timeline, so the first tick of the next day starts immediately after the previous day ends
+- a carried run reports `DAY=all` in the summary because it spans multiple days
 
 Artifact mode examples:
 

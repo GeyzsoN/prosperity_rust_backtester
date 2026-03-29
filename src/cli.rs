@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,7 +10,8 @@ use serde_json::Value;
 
 use crate::jsonfmt::{object, pretty_json_bytes};
 use crate::model::{
-    MatchingConfig, RunRequest, load_dataset, materialize_submission_json_if_missing,
+    MatchingConfig, MetadataOverrides, NormalizedDataset, RunRequest, load_dataset,
+    materialize_submission_json_if_missing,
 };
 use crate::runner::{default_output_root, display_path, project_root, run_backtest};
 
@@ -39,6 +40,8 @@ struct Args {
     output_root: Option<PathBuf>,
     #[arg(long, default_value_t = false)]
     persist: bool,
+    #[arg(long, alias = "carry-state", default_value_t = false)]
+    carry: bool,
     #[arg(long, default_value_t = false)]
     flat: bool,
     #[arg(long = "artifact-mode", value_enum)]
@@ -58,6 +61,7 @@ pub fn run() -> Result<()> {
         args.day,
         args.run_id.as_deref(),
         dataset.exclude_submission_when_day_filtered,
+        args.carry,
     )?;
     let flat_layout = args.flat && plans.len() > 1;
     let flat_dir = if flat_layout {
@@ -83,6 +87,7 @@ pub fn run() -> Result<()> {
         let output = run_backtest(&RunRequest {
             trader_file: trader.path.clone(),
             dataset_file: plan.dataset_file.clone(),
+            dataset_override: plan.dataset_override.clone(),
             day: plan.day,
             matching: matching.clone(),
             run_id: Some(plan.run_id),
@@ -92,7 +97,7 @@ pub fn run() -> Result<()> {
             write_bundle,
             write_submission_log,
             materialize_artifacts,
-            metadata_overrides: Default::default(),
+            metadata_overrides: plan.metadata_overrides.clone(),
         })?;
 
         let run_dir_label = if let Some(flat_dir) = &flat_dir {
@@ -113,7 +118,7 @@ pub fn run() -> Result<()> {
         };
 
         rows.push(SummaryRow {
-            dataset: short_dataset_label(&plan.dataset_file),
+            dataset: plan.summary_label.clone(),
             day: output.metrics.day,
             tick_count: output.metrics.tick_count,
             own_trade_count: output.metrics.own_trade_count,
@@ -155,9 +160,12 @@ pub fn run() -> Result<()> {
 #[derive(Debug, Clone)]
 struct PlannedRun {
     dataset_file: PathBuf,
+    dataset_override: Option<NormalizedDataset>,
     day: Option<i64>,
     run_id: String,
     artifact_prefix: String,
+    summary_label: String,
+    metadata_overrides: MetadataOverrides,
 }
 
 #[derive(Debug, Clone)]
@@ -236,6 +244,7 @@ fn build_run_plan(
     requested_day: Option<i64>,
     requested_run_id: Option<&str>,
     exclude_submission_when_day_filtered: bool,
+    carry_state: bool,
 ) -> Result<(String, Vec<PlannedRun>)> {
     let mut seen = BTreeSet::new();
     let mut targets = Vec::new();
@@ -289,26 +298,283 @@ fn build_run_plan(
     let run_id_seed = requested_run_id
         .map(ToOwned::to_owned)
         .unwrap_or_else(default_run_id_seed);
-    let multiple_runs = targets.len() > 1;
+    let plans = if carry_state {
+        build_carry_plans(&targets, &run_id_seed)?
+    } else {
+        build_standard_plans(targets, &run_id_seed)
+    };
 
-    let plans = targets
+    Ok((run_id_seed, plans))
+}
+
+fn build_standard_plans(targets: Vec<(PathBuf, Option<i64>)>, run_id_seed: &str) -> Vec<PlannedRun> {
+    let multiple_runs = targets.len() > 1;
+    targets
         .into_iter()
-        .map(|(dataset_file, day)| {
-            let artifact_prefix = run_suffix(&dataset_file, day);
-            PlannedRun {
-                run_id: if multiple_runs {
-                    format!("{run_id_seed}-{artifact_prefix}")
-                } else {
-                    run_id_seed.clone()
-                },
-                dataset_file,
-                day,
-                artifact_prefix,
-            }
+        .map(|(dataset_file, day)| build_single_plan(dataset_file, day, run_id_seed, multiple_runs))
+        .collect()
+}
+
+fn build_carry_plans(
+    targets: &[(PathBuf, Option<i64>)],
+    run_id_seed: &str,
+) -> Result<Vec<PlannedRun>> {
+    let mut plans = Vec::new();
+    let mut carry_buffer: Vec<(PathBuf, Option<i64>)> = Vec::new();
+    let mut carry_key: Option<String> = None;
+
+    for (dataset_file, day) in targets {
+        if is_submission_like_path(dataset_file) {
+            flush_carry_buffer(&mut plans, &mut carry_buffer)?;
+            carry_key = None;
+            plans.push(PlannedRun {
+                metadata_overrides: Default::default(),
+                ..build_single_plan(dataset_file.clone(), *day, "", false)
+            });
+            continue;
+        }
+
+        let next_key = carry_group_key(dataset_file);
+        if !carry_buffer.is_empty() && carry_key.as_ref() != Some(&next_key) {
+            flush_carry_buffer(&mut plans, &mut carry_buffer)?;
+        }
+        carry_key = Some(next_key);
+        carry_buffer.push((dataset_file.clone(), *day));
+    }
+    flush_carry_buffer(&mut plans, &mut carry_buffer)?;
+
+    let multiple_runs = plans.len() > 1;
+    for plan in &mut plans {
+        plan.run_id = if multiple_runs {
+            format!("{run_id_seed}-{}", plan.artifact_prefix)
+        } else {
+            run_id_seed.to_string()
+        };
+    }
+
+    Ok(plans)
+}
+
+fn flush_carry_buffer(
+    plans: &mut Vec<PlannedRun>,
+    carry_buffer: &mut Vec<(PathBuf, Option<i64>)>,
+) -> Result<()> {
+    if carry_buffer.is_empty() {
+        return Ok(());
+    }
+
+    if carry_buffer.len() == 1 {
+        let (dataset_file, day) = carry_buffer.pop().expect("carry buffer should have one item");
+        plans.push(PlannedRun {
+            metadata_overrides: Default::default(),
+            ..build_single_plan(dataset_file, day, "", false)
+        });
+        return Ok(());
+    }
+
+    let first_file = carry_buffer[0].0.clone();
+    let grouped_targets = carry_buffer.clone();
+    let artifact_prefix = carry_artifact_prefix(&first_file);
+    let summary_label = carry_summary_label(&first_file);
+    let dataset_override = Some(build_carry_dataset(&grouped_targets)?);
+    let recorded_dataset_path = Some(carry_recorded_dataset_path(&grouped_targets));
+
+    plans.push(PlannedRun {
+        dataset_file: first_file,
+        dataset_override,
+        day: None,
+        run_id: String::new(),
+        artifact_prefix,
+        summary_label,
+        metadata_overrides: MetadataOverrides {
+            recorded_dataset_path,
+            ..Default::default()
+        },
+    });
+    carry_buffer.clear();
+    Ok(())
+}
+
+fn build_single_plan(
+    dataset_file: PathBuf,
+    day: Option<i64>,
+    run_id_seed: &str,
+    multiple_runs: bool,
+) -> PlannedRun {
+    let artifact_prefix = run_suffix(&dataset_file, day);
+    PlannedRun {
+        run_id: if multiple_runs {
+            format!("{run_id_seed}-{artifact_prefix}")
+        } else {
+            run_id_seed.to_string()
+        },
+        dataset_override: None,
+        summary_label: short_dataset_label(&dataset_file),
+        metadata_overrides: Default::default(),
+        dataset_file,
+        day,
+        artifact_prefix,
+    }
+}
+
+fn carry_group_key(path: &Path) -> String {
+    if is_day_dataset_path(path) {
+        return path
+            .parent()
+            .map(display_path)
+            .unwrap_or_else(|| display_path(path));
+    }
+    display_path(path)
+}
+
+fn carry_artifact_prefix(path: &Path) -> String {
+    let base = dataset_container_label(path).unwrap_or_else(|| dataset_stem_label(path));
+    sanitize_identifier(&format!("{base}-carry"))
+}
+
+fn carry_summary_label(path: &Path) -> String {
+    format!(
+        "{}-carry",
+        dataset_container_label(path).unwrap_or_else(|| short_dataset_label(path))
+    )
+}
+
+fn carry_recorded_dataset_path(targets: &[(PathBuf, Option<i64>)]) -> String {
+    let first_path = &targets[0].0;
+    let base = if is_day_dataset_path(first_path) {
+        first_path
+            .parent()
+            .map(display_path)
+            .unwrap_or_else(|| display_path(first_path))
+    } else {
+        display_path(first_path)
+    };
+    let day_labels: Vec<String> = targets
+        .iter()
+        .map(|(_, day)| {
+            day.map(|value| value.to_string())
+                .unwrap_or_else(|| "all".to_string())
+        })
+        .collect();
+    format!("{base} [carry days: {}]", day_labels.join(","))
+}
+
+fn carry_dataset_id(targets: &[(PathBuf, Option<i64>)]) -> String {
+    let first_path = &targets[0].0;
+    let base = dataset_container_label(first_path).unwrap_or_else(|| dataset_stem_label(first_path));
+    sanitize_identifier(&format!("{base}-carry"))
+}
+
+fn build_carry_dataset(targets: &[(PathBuf, Option<i64>)]) -> Result<NormalizedDataset> {
+    let mut cache: BTreeMap<PathBuf, NormalizedDataset> = BTreeMap::new();
+    let mut schema_version: Option<String> = None;
+    let mut competition_version: Option<String> = None;
+    let mut products = BTreeSet::new();
+    let mut ticks = Vec::new();
+    let carried_inputs: Vec<Value> = targets
+        .iter()
+        .map(|(path, day)| {
+            Value::String(match day {
+                Some(value) => format!("{}#day={value}", display_path(path)),
+                None => display_path(path),
+            })
         })
         .collect();
 
-    Ok((run_id_seed, plans))
+    for (dataset_file, day) in targets {
+        if !cache.contains_key(dataset_file) {
+            cache.insert(dataset_file.clone(), load_dataset(dataset_file)?);
+        }
+        let dataset = cache
+            .get(dataset_file)
+            .context("carry dataset should have been cached")?;
+
+        match (&schema_version, &competition_version) {
+            (Some(expected_schema), Some(expected_competition)) => {
+                if dataset.schema_version != *expected_schema
+                    || dataset.competition_version != *expected_competition
+                {
+                    bail!(
+                        "cannot carry across incompatible datasets: {}",
+                        display_path(dataset_file)
+                    );
+                }
+            }
+            _ => {
+                schema_version = Some(dataset.schema_version.clone());
+                competition_version = Some(dataset.competition_version.clone());
+            }
+        }
+
+        for product in &dataset.products {
+            products.insert(product.clone());
+        }
+        ticks.extend(
+            dataset
+                .ticks
+                .iter()
+                .filter(|tick| day.is_none_or(|value| tick.day == Some(value)))
+                .cloned(),
+        );
+    }
+
+    ticks.sort_by_key(|tick| (tick.day, tick.timestamp));
+    normalize_carry_timestamps(&mut ticks);
+
+    let mut metadata = IndexMap::new();
+    metadata.insert("carry".to_string(), Value::Bool(true));
+    metadata.insert(
+        "carry_timestamp_mode".to_string(),
+        Value::String("continuous".to_string()),
+    );
+    metadata.insert("carried_inputs".to_string(), Value::Array(carried_inputs));
+
+    Ok(NormalizedDataset {
+        schema_version: schema_version.context("carry dataset missing schema version")?,
+        competition_version: competition_version
+            .context("carry dataset missing competition version")?,
+        dataset_id: carry_dataset_id(targets),
+        source: format!("carry:{}", carry_recorded_dataset_path(targets)),
+        products: products.into_iter().collect(),
+        metadata,
+        ticks,
+    })
+}
+
+fn normalize_carry_timestamps(ticks: &mut [crate::model::TickSnapshot]) {
+    let mut index = 0usize;
+    let mut next_base = 0i64;
+
+    while index < ticks.len() {
+        let day = ticks[index].day;
+        let start = index;
+        let mut end = index + 1;
+        while end < ticks.len() && ticks[end].day == day {
+            end += 1;
+        }
+
+        let day_start = ticks[start].timestamp;
+        let day_end = ticks[end - 1].timestamp;
+        let mut step = 1i64;
+        for pair in ticks[start..end].windows(2) {
+            let delta = pair[1].timestamp - pair[0].timestamp;
+            if delta > 0 {
+                step = delta;
+                break;
+            }
+        }
+        let offset = next_base - day_start;
+        for tick in &mut ticks[start..end] {
+            tick.timestamp += offset;
+            for trades in tick.market_trades.values_mut() {
+                for trade in trades {
+                    trade.timestamp += offset;
+                }
+            }
+        }
+        next_base += (day_end - day_start) + step;
+        index = end;
+    }
 }
 
 fn collect_dataset_files(dataset_root: &Path) -> Result<Vec<PathBuf>> {
@@ -1346,10 +1612,10 @@ fn short_product_label(product: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        ProductDisplayMode, ProductMatrix, ProductMatrixRow, SummaryRow, build_product_matrix,
-        collect_dataset_files, collect_requested_days, merge_submission_logs,
-        resolve_dataset_input, resolve_dataset_input_with_root, round_submission_entry, run_suffix,
-        short_dataset_label,
+        ProductDisplayMode, ProductMatrix, ProductMatrixRow, SummaryRow, build_carry_dataset,
+        build_product_matrix, build_run_plan, collect_dataset_files, collect_requested_days,
+        merge_submission_logs, resolve_dataset_input, resolve_dataset_input_with_root,
+        round_submission_entry, run_suffix, short_dataset_label,
     };
     use crate::model::{ArtifactSet, MatchingConfig, RunMetrics, RunOutput, load_dataset};
     use crate::runner::project_root;
@@ -1533,6 +1799,63 @@ mod tests {
     fn short_label_uses_known_aliases() {
         let label = short_dataset_label(std::path::Path::new("submission.json"));
         assert_eq!(label, "SUB");
+    }
+
+    #[test]
+    fn carry_plan_groups_tutorial_days_but_leaves_submission_separate() {
+        let (_run_id, plans) = build_run_plan(
+            &[project_root().join("datasets/tutorial")],
+            None,
+            Some("carry-check"),
+            true,
+            true,
+        )
+        .expect("carry plan should build");
+
+        assert_eq!(plans.len(), 2);
+        assert_eq!(plans[0].artifact_prefix, "tutorial-carry");
+        assert_eq!(plans[0].summary_label, "tutorial-carry");
+        assert!(plans[0].dataset_override.is_some());
+        assert_eq!(plans[0].day, None);
+        assert_eq!(
+            plans[0].metadata_overrides.recorded_dataset_path.as_deref(),
+            Some("datasets/tutorial [carry days: -2,-1]")
+        );
+
+        assert_eq!(plans[1].artifact_prefix, "tutorial-submission-day-1");
+        assert_eq!(plans[1].summary_label, "SUB");
+        assert!(plans[1].dataset_override.is_none());
+        assert_eq!(plans[1].day, Some(-1));
+    }
+
+    #[test]
+    fn carry_dataset_normalizes_day_boundaries_into_continuous_timestamps() {
+        let dataset = build_carry_dataset(&[
+            (
+                project_root().join("datasets/tutorial/prices_round_0_day_-2.csv"),
+                Some(-2),
+            ),
+            (
+                project_root().join("datasets/tutorial/prices_round_0_day_-1.csv"),
+                Some(-1),
+            ),
+        ])
+        .expect("carry dataset should build");
+
+        let first_day_minus_one = dataset
+            .ticks
+            .iter()
+            .find(|tick| tick.day == Some(-1))
+            .expect("day -1 ticks should exist");
+        let last_day_minus_two = dataset
+            .ticks
+            .iter()
+            .rev()
+            .find(|tick| tick.day == Some(-2))
+            .expect("day -2 ticks should exist");
+
+        assert_eq!(last_day_minus_two.timestamp, 999_900);
+        assert_eq!(first_day_minus_one.timestamp, 1_000_000);
     }
 
     #[test]

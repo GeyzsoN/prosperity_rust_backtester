@@ -121,13 +121,17 @@ fn path_string(path: &Path) -> String {
 }
 
 pub fn run_backtest(request: &RunRequest) -> Result<RunOutput> {
-    let dataset = load_dataset(&request.dataset_file)?;
+    let dataset = if let Some(dataset) = &request.dataset_override {
+        dataset.clone()
+    } else {
+        load_dataset(&request.dataset_file)?
+    };
     let mut ticks: Vec<&TickSnapshot> = dataset
         .ticks
         .iter()
         .filter(|tick| request.day.is_none_or(|day| tick.day == Some(day)))
         .collect();
-    ticks.sort_by_key(|tick| tick.timestamp);
+    ticks.sort_by_key(|tick| (tick.day, tick.timestamp));
     if ticks.is_empty() {
         bail!("No ticks available for selected dataset/day");
     }
@@ -1271,8 +1275,12 @@ mod tests {
         python_round_to_digits, python_round_to_i64, queue_penetration_available,
         slippage_adjusted_price,
     };
-    use crate::model::{MarketTrade, MatchingConfig, Order, RunRequest};
+    use crate::model::{
+        MarketTrade, MatchingConfig, NormalizedDataset, ObservationState, Order, OrderBookLevel,
+        ProductSnapshot, RunRequest, TickSnapshot,
+    };
     use indexmap::IndexMap;
+    use serde_json::Value;
     use std::fs;
 
     #[test]
@@ -1465,6 +1473,7 @@ mod tests {
         let request = RunRequest {
             trader_file: project_root().join("traders/latest_trader.py"),
             dataset_file: project_root().join("datasets/tutorial/prices_round_0_day_-1.csv"),
+            dataset_override: None,
             day: Some(-1),
             matching: MatchingConfig::default(),
             run_id: Some("log-only-check".to_string()),
@@ -1481,6 +1490,125 @@ mod tests {
 
         assert!(output.run_dir.join("metrics.json").is_file());
         assert!(output.run_dir.join("submission.log").is_file());
+
+        fs::remove_dir_all(output_root).expect("temp output root should be cleaned up");
+    }
+
+    #[test]
+    fn dataset_override_carries_position_across_days() {
+        let unique = format!(
+            "runner-carry-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock should be after epoch")
+                .as_nanos()
+        );
+        let output_root = std::env::temp_dir().join(&unique);
+        fs::create_dir_all(&output_root).expect("temp output root should exist");
+        let trader_file = output_root.join("carry_probe_trader.py");
+        fs::write(
+            &trader_file,
+            r#"from datamodel import Order, TradingState
+
+class Trader:
+    def run(self, state: TradingState):
+        seen = int(state.position.get("EMERALDS", 0))
+        print(f"seen={seen}")
+        orders = {}
+        if seen == 0:
+            orders["EMERALDS"] = [Order("EMERALDS", 10000, 1)]
+        return orders, 0, ""
+"#,
+        )
+        .expect("temp trader file should be written");
+
+        let dataset_override = NormalizedDataset {
+            schema_version: "test".to_string(),
+            competition_version: "test".to_string(),
+            dataset_id: "carry-test".to_string(),
+            source: "test".to_string(),
+            products: vec!["EMERALDS".to_string()],
+            metadata: IndexMap::new(),
+            ticks: vec![
+                TickSnapshot {
+                    timestamp: 0,
+                    day: Some(-2),
+                    products: IndexMap::from([(
+                        "EMERALDS".to_string(),
+                        ProductSnapshot {
+                            product: "EMERALDS".to_string(),
+                            bids: vec![OrderBookLevel {
+                                price: 9999,
+                                volume: 1,
+                            }],
+                            asks: vec![OrderBookLevel {
+                                price: 10000,
+                                volume: 1,
+                            }],
+                            mid_price: Some(9999.5),
+                        },
+                    )]),
+                    market_trades: IndexMap::new(),
+                    observations: ObservationState::default(),
+                },
+                TickSnapshot {
+                    timestamp: 0,
+                    day: Some(-1),
+                    products: IndexMap::from([(
+                        "EMERALDS".to_string(),
+                        ProductSnapshot {
+                            product: "EMERALDS".to_string(),
+                            bids: vec![OrderBookLevel {
+                                price: 9999,
+                                volume: 1,
+                            }],
+                            asks: vec![OrderBookLevel {
+                                price: 10000,
+                                volume: 1,
+                            }],
+                            mid_price: Some(9999.5),
+                        },
+                    )]),
+                    market_trades: IndexMap::new(),
+                    observations: ObservationState::default(),
+                },
+            ],
+        };
+
+        let request = RunRequest {
+            trader_file,
+            dataset_file: project_root().join("datasets/tutorial/prices_round_0_day_-1.csv"),
+            dataset_override: Some(dataset_override),
+            day: None,
+            matching: MatchingConfig::default(),
+            run_id: Some("carry-check".to_string()),
+            output_root: output_root.clone(),
+            persist: false,
+            write_metrics: true,
+            write_bundle: true,
+            write_submission_log: false,
+            materialize_artifacts: true,
+            metadata_overrides: Default::default(),
+        };
+
+        let output = run_backtest(&request).expect("carry backtest should succeed");
+        let artifacts = output
+            .artifacts
+            .as_ref()
+            .expect("artifacts should be available for materialized runs");
+        let bundle: Value =
+            serde_json::from_slice(&artifacts.bundle_json).expect("bundle JSON should parse");
+        let timeline = bundle["timeline"]
+            .as_array()
+            .expect("timeline should be an array");
+
+        assert_eq!(timeline.len(), 2);
+        assert_eq!(timeline[0]["day"].as_i64(), Some(-2));
+        assert_eq!(timeline[1]["day"].as_i64(), Some(-1));
+        assert_eq!(timeline[0]["position"]["EMERALDS"].as_i64(), Some(1));
+        assert_eq!(timeline[1]["position"]["EMERALDS"].as_i64(), Some(1));
+        assert_eq!(timeline[0]["algorithm_logs"].as_str(), Some("seen=0"));
+        assert_eq!(timeline[1]["algorithm_logs"].as_str(), Some("seen=1"));
 
         fs::remove_dir_all(output_root).expect("temp output root should be cleaned up");
     }

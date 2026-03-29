@@ -119,6 +119,7 @@ pub struct MetadataOverrides {
 pub struct RunRequest {
     pub trader_file: PathBuf,
     pub dataset_file: PathBuf,
+    pub dataset_override: Option<NormalizedDataset>,
     pub day: Option<i64>,
     pub matching: MatchingConfig,
     pub run_id: Option<String>,

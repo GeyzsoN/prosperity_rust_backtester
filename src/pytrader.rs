@@ -1,5 +1,6 @@
 use std::ffi::CString;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result, bail};
 use indexmap::IndexMap;
@@ -363,8 +364,18 @@ pub struct PythonTrader {
     invoke_fn: Py<PyAny>,
 }
 
+fn python_import_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 impl PythonTrader {
     pub fn new(workspace_root: &Path, trader_file: &Path) -> Result<Self> {
+        // Trader module loading temporarily rewires sys.modules["datamodel"] so
+        // parallel imports must not overlap.
+        let _import_guard = python_import_lock()
+            .lock()
+            .expect("python import lock should not be poisoned");
         Python::attach(|py| -> Result<Self> {
             let helper_code = CString::new(PY_HELPER)?;
             let helper = PyModule::from_code(

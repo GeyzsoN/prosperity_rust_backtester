@@ -1,6 +1,6 @@
 [package]
 name = "rust_backtester"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Standalone Rust IMC Prosperity 4 backtester"
 license = "MIT OR Apache-2.0"

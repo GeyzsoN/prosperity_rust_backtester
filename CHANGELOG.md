@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.1 - 2026-04-18
+
+### Added
+
+- Bundle the raw IMC round 2 day CSVs under `datasets/round2/` with the official filenames from the latest round 2 download.
+
+### Changed
+
+- Make round 2 the default zero-argument dataset now that it is the latest populated bundled round.
+- Update the README to document the bundled round 2 data and default dataset behavior.
+
 ## v0.4.0 - 2026-04-17
 
 ### Changed

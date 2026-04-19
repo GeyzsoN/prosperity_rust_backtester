@@ -43,6 +43,15 @@ rust_backtester
 
 If `rust_backtester` is not found after install, make sure `~/.cargo/bin` is on your `PATH`.
 
+If `rust_backtester cannot be executed after install, make sure that `~/scripts/cargo_local.sh` is executable:
+```
+ls -la scripts/
+
+sed -i 's/\r$//' scripts/cargo_local.sh
+
+chmod +x scripts/cargo_local.sh
+```
+
 For local development from this repo, either install the local CLI:
 
 ```bash

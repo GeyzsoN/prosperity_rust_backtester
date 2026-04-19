@@ -41,7 +41,7 @@ rust_backtester --help
 rust_backtester
 ```
 
-If `rust_backtester` is not found after install, make sure `~/.cargo/bin` is on your `PATH`:
+If `rust_backtester` is not found after install, make sure `~/.cargo/bin` is on your `PATH` and that `~/scripts/cargo_local.sh` are readable:
 ```
 ls -la scripts/
 

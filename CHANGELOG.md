@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.9 - 2026-04-26
+
+### Changed
+
+- Whitelist the crate package contents so crates.io publishes ignore unrelated local dataset folders that are not part of the release.
+
 ## v0.4.8 - 2026-04-26
 
 ### Added

@@ -1,6 +1,6 @@
 [package]
 name = "rust_backtester"
-version = "0.4.8"
+version = "0.4.9"
 edition = "2024"
 description = "Standalone Rust IMC Prosperity 4 backtester"
 license = "MIT OR Apache-2.0"
@@ -9,6 +9,22 @@ repository = "https://github.com/GeyzsoN/prosperity_rust_backtester"
 homepage = "https://github.com/GeyzsoN/prosperity_rust_backtester"
 keywords = ["imc", "backtester", "trading", "rust"]
 categories = ["command-line-utilities", "simulation"]
+include = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "src/**",
+    "traders/*.py",
+    "traders/**/*.py",
+    "datasets/tutorial/**",
+    "datasets/round1/**",
+    "datasets/round2/**",
+    "datasets/round3/**",
+    "datasets/round4/**",
+]
 
 [dependencies]
 anyhow = "1.0"

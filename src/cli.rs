@@ -36,6 +36,8 @@ struct Args {
     queue_penetration: f64,
     #[arg(long = "price-slippage-bps", default_value_t = 0.0)]
     price_slippage_bps: f64,
+    #[arg(long = "raw-csv-market-trades", default_value = "residual")]
+    raw_csv_market_trades: String,
     #[arg(long = "output-root")]
     output_root: Option<PathBuf>,
     #[arg(long, default_value_t = false)]
@@ -78,6 +80,7 @@ pub fn run() -> Result<()> {
         trade_match_mode: args.trade_match_mode.clone(),
         queue_penetration: args.queue_penetration,
         price_slippage_bps: args.price_slippage_bps,
+        raw_csv_market_trades: args.raw_csv_market_trades.clone(),
     };
     let artifact_mode = resolve_artifact_mode(&args);
     let (persist, write_metrics, write_bundle, write_submission_log, materialize_artifacts) =
@@ -108,11 +111,7 @@ pub fn run() -> Result<()> {
                     output.run_dir.display()
                 )
             })?;
-            format!(
-                "{}/{}-*",
-                display_path(flat_dir),
-                plan.artifact_prefix
-            )
+            format!("{}/{}-*", display_path(flat_dir), plan.artifact_prefix)
         } else {
             display_path(&output.run_dir)
         };
@@ -307,7 +306,10 @@ fn build_run_plan(
     Ok((run_id_seed, plans))
 }
 
-fn build_standard_plans(targets: Vec<(PathBuf, Option<i64>)>, run_id_seed: &str) -> Vec<PlannedRun> {
+fn build_standard_plans(
+    targets: Vec<(PathBuf, Option<i64>)>,
+    run_id_seed: &str,
+) -> Vec<PlannedRun> {
     let multiple_runs = targets.len() > 1;
     targets
         .into_iter()
@@ -364,7 +366,9 @@ fn flush_carry_buffer(
     }
 
     if carry_buffer.len() == 1 {
-        let (dataset_file, day) = carry_buffer.pop().expect("carry buffer should have one item");
+        let (dataset_file, day) = carry_buffer
+            .pop()
+            .expect("carry buffer should have one item");
         plans.push(PlannedRun {
             metadata_overrides: Default::default(),
             ..build_single_plan(dataset_file, day, "", false)
@@ -461,7 +465,8 @@ fn carry_recorded_dataset_path(targets: &[(PathBuf, Option<i64>)]) -> String {
 
 fn carry_dataset_id(targets: &[(PathBuf, Option<i64>)]) -> String {
     let first_path = &targets[0].0;
-    let base = dataset_container_label(first_path).unwrap_or_else(|| dataset_stem_label(first_path));
+    let base =
+        dataset_container_label(first_path).unwrap_or_else(|| dataset_stem_label(first_path));
     sanitize_identifier(&format!("{base}-carry"))
 }
 
@@ -1272,15 +1277,27 @@ fn render_day(day: Option<i64>) -> String {
 
 fn reset_flat_output_dir(flat_dir: &Path) -> Result<()> {
     if flat_dir.is_dir() {
-        fs::remove_dir_all(flat_dir)
-            .with_context(|| format!("failed to replace flat output directory {}", flat_dir.display()))?;
+        fs::remove_dir_all(flat_dir).with_context(|| {
+            format!(
+                "failed to replace flat output directory {}",
+                flat_dir.display()
+            )
+        })?;
     }
-    fs::create_dir_all(flat_dir)
-        .with_context(|| format!("failed to create flat output directory {}", flat_dir.display()))?;
+    fs::create_dir_all(flat_dir).with_context(|| {
+        format!(
+            "failed to create flat output directory {}",
+            flat_dir.display()
+        )
+    })?;
     Ok(())
 }
 
-fn write_flat_run_artifacts(flat_dir: &Path, prefix: &str, output: &crate::model::RunOutput) -> Result<()> {
+fn write_flat_run_artifacts(
+    flat_dir: &Path,
+    prefix: &str,
+    output: &crate::model::RunOutput,
+) -> Result<()> {
     let artifacts = output
         .artifacts
         .as_ref()
@@ -1288,7 +1305,12 @@ fn write_flat_run_artifacts(flat_dir: &Path, prefix: &str, output: &crate::model
 
     write_prefixed_artifact(flat_dir, prefix, "metrics.json", &artifacts.metrics_json)?;
     write_prefixed_artifact(flat_dir, prefix, "bundle.json", &artifacts.bundle_json)?;
-    write_prefixed_artifact(flat_dir, prefix, "submission.log", &artifacts.submission_log)?;
+    write_prefixed_artifact(
+        flat_dir,
+        prefix,
+        "submission.log",
+        &artifacts.submission_log,
+    )?;
     write_prefixed_artifact(flat_dir, prefix, "activity.csv", &artifacts.activity_csv)?;
     write_prefixed_artifact(
         flat_dir,
@@ -1301,7 +1323,12 @@ fn write_flat_run_artifacts(flat_dir: &Path, prefix: &str, output: &crate::model
     Ok(())
 }
 
-fn write_prefixed_artifact(flat_dir: &Path, prefix: &str, file_name: &str, bytes: &[u8]) -> Result<()> {
+fn write_prefixed_artifact(
+    flat_dir: &Path,
+    prefix: &str,
+    file_name: &str,
+    bytes: &[u8],
+) -> Result<()> {
     if bytes.is_empty() {
         return Ok(());
     }
@@ -1948,7 +1975,7 @@ mod tests {
     #[test]
     fn dataset_alias_defaults_to_latest_round() {
         let dataset = resolve_dataset_input(None).expect("dataset should resolve");
-        assert_eq!(dataset.label, "round4");
+        assert_eq!(dataset.label, "round5");
         assert_eq!(dataset.roots.len(), 1);
         assert!(dataset.auto_selected);
     }

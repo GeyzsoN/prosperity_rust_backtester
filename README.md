@@ -130,12 +130,17 @@ The repo is organized by round:
 - `datasets/round4/trades_round_4_day_2.csv`
 - `datasets/round4/prices_round_4_day_3.csv`
 - `datasets/round4/trades_round_4_day_3.csv`
-- `datasets/round5/`
+- `datasets/round5/prices_round_5_day_2.csv`
+- `datasets/round5/trades_round_5_day_2.csv`
+- `datasets/round5/prices_round_5_day_3.csv`
+- `datasets/round5/trades_round_5_day_3.csv`
+- `datasets/round5/prices_round_5_day_4.csv`
+- `datasets/round5/trades_round_5_day_4.csv`
 - `datasets/round6/`
 - `datasets/round7/`
 - `datasets/round8/`
 
-Right now the bundled public data is the raw IMC tutorial day data in `datasets/tutorial/`, the raw round 1 day data in `datasets/round1/`, the raw round 2 day data in `datasets/round2/`, the raw round 3 day data in `datasets/round3/`, the raw round 4 day data in `datasets/round4/`, plus a sample tutorial `submission.log` produced with the bundled basic trader. The remaining round folders are there so future round files can be placed in the correct folder instead of being mixed together.
+Right now the bundled public data is the raw IMC tutorial day data in `datasets/tutorial/`, the raw round 1 day data in `datasets/round1/`, the raw round 2 day data in `datasets/round2/`, the raw round 3 day data in `datasets/round3/`, the raw round 4 day data in `datasets/round4/`, the raw round 5 day data in `datasets/round5/`, plus a sample tutorial `submission.log` produced with the bundled basic trader. The remaining round folders are there so future round files can be placed in the correct folder instead of being mixed together.
 If you place a portal `submission.log` file into a round folder, the backtester will use it. `submission.log` is also generated for persisted runs.
 
 ## CLI
@@ -413,7 +418,8 @@ The Docker image builds the project in a clean container and runs the zero-argum
 - `datasets/round2/` bundled raw IMC round 2 CSVs
 - `datasets/round3/` bundled raw IMC round 3 CSVs
 - `datasets/round4/` bundled raw IMC round 4 CSVs
-- `datasets/round5/` ... `datasets/round8/` placeholders for future round data
+- `datasets/round5/` bundled raw IMC round 5 CSVs
+- `datasets/round6/` ... `datasets/round8/` placeholders for future round data
 - `runs/` persisted outputs when `--persist` is used
 - `runs/<backtest-id>/` combined bundle for persisted multi-day runs, including `combined.log` and `manifest.json`
 

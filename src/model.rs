@@ -95,6 +95,7 @@ pub struct MatchingConfig {
     pub trade_match_mode: String,
     pub queue_penetration: f64,
     pub price_slippage_bps: f64,
+    pub raw_csv_market_trades: String,
 }
 
 impl Default for MatchingConfig {
@@ -103,6 +104,7 @@ impl Default for MatchingConfig {
             trade_match_mode: "all".to_string(),
             queue_penetration: 1.0,
             price_slippage_bps: 0.0,
+            raw_csv_market_trades: "residual".to_string(),
         }
     }
 }

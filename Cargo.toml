@@ -1,8 +1,8 @@
 [package]
 name = "rust_backtester"
-version = "0.4.9"
+version = "0.5.0"
 edition = "2024"
-description = "Standalone Rust IMC Prosperity 4 backtester"
+description = "Standalone Rust IMC Prosperity backtester"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/GeyzsoN/prosperity_rust_backtester"
@@ -16,14 +16,35 @@ include = [
     "CHANGELOG.md",
     "LICENSE-APACHE",
     "LICENSE-MIT",
-    "src/**",
+    "src/cli.rs",
+    "src/jsonfmt.rs",
+    "src/lib.rs",
+    "src/main.rs",
+    "src/model.rs",
+    "src/pytrader.rs",
+    "src/runner.rs",
     "traders/*.py",
     "traders/**/*.py",
-    "datasets/tutorial/**",
-    "datasets/round1/**",
-    "datasets/round2/**",
-    "datasets/round3/**",
-    "datasets/round4/**",
+    "datasets/tutorial/.gitkeep",
+    "datasets/tutorial/prices_round_0_day_*.csv",
+    "datasets/tutorial/trades_round_0_day_*.csv",
+    "datasets/tutorial/submission.log",
+    "datasets/tutorial/submission.json",
+    "datasets/round1/.gitkeep",
+    "datasets/round1/prices_round_1_day_*.csv",
+    "datasets/round1/trades_round_1_day_*.csv",
+    "datasets/round2/.gitkeep",
+    "datasets/round2/prices_round_2_day_*.csv",
+    "datasets/round2/trades_round_2_day_*.csv",
+    "datasets/round3/.gitkeep",
+    "datasets/round3/prices_round_3_day_*.csv",
+    "datasets/round3/trades_round_3_day_*.csv",
+    "datasets/round4/.gitkeep",
+    "datasets/round4/prices_round_4_day_*.csv",
+    "datasets/round4/trades_round_4_day_*.csv",
+    "datasets/round5/.gitkeep",
+    "datasets/round5/prices_round_5_day_*.csv",
+    "datasets/round5/trades_round_5_day_*.csv",
 ]
 
 [dependencies]

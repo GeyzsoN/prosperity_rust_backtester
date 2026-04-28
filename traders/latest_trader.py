@@ -21,13 +21,27 @@ class Trader:
         "VEV_6000": 300,
         "VEV_6500": 300,
     }
+    ROUND5_PREFIXES = (
+        "GALAXY_SOUNDS_",
+        "SLEEP_POD_",
+        "MICROCHIP_",
+        "PEBBLES_",
+        "ROBOT_",
+        "UV_VISOR_",
+        "TRANSLATOR_",
+        "PANEL_",
+        "OXYGEN_SHAKE_",
+        "SNACKPACK_",
+    )
+    ROUND5_LIMIT = 10
     QUOTE_SIZE = 5
 
     def run(self, state: TradingState):
         orders_by_product: Dict[str, List[Order]] = {}
 
         for product, order_depth in state.order_depths.items():
-            if product not in self.LIMITS:
+            limit = self.limit_for(product)
+            if limit is None:
                 orders_by_product[product] = []
                 continue
             position = int(state.position.get(product, 0))
@@ -35,15 +49,24 @@ class Trader:
                 product,
                 order_depth,
                 position,
+                limit,
             )
 
         return orders_by_product, 0, ""
+
+    def limit_for(self, product: str):
+        if product in self.LIMITS:
+            return self.LIMITS[product]
+        if product.startswith(self.ROUND5_PREFIXES):
+            return self.ROUND5_LIMIT
+        return None
 
     def quote_both_sides(
         self,
         product: str,
         order_depth: OrderDepth,
         position: int,
+        limit: int,
     ) -> List[Order]:
         if not order_depth.buy_orders or not order_depth.sell_orders:
             return []
@@ -60,7 +83,6 @@ class Trader:
             bid_price = best_bid
             ask_price = best_ask
 
-        limit = self.LIMITS[product]
         buy_size = min(self.QUOTE_SIZE, max(0, limit - position))
         sell_size = min(self.QUOTE_SIZE, max(0, limit + position))
 

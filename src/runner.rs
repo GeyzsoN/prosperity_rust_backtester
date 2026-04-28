@@ -307,10 +307,8 @@ pub fn run_backtest(request: &RunRequest) -> Result<RunOutput> {
             if let Some(stable_mark) = resolve_stable_mark(snapshot) {
                 last_stable_mark_by_product.insert(product.clone(), stable_mark);
             }
-            let mark_price = resolve_mark_price(
-                snapshot,
-                last_stable_mark_by_product.get(product).copied(),
-            );
+            let mark_price =
+                resolve_mark_price(snapshot, last_stable_mark_by_product.get(product).copied());
             if let Some(price) = mark_price {
                 mark_prices.insert(product.clone(), price);
             }
@@ -321,7 +319,9 @@ pub fn run_backtest(request: &RunRequest) -> Result<RunOutput> {
             pnl_by_product.insert(product.clone(), pnl);
 
             if need_submission_log {
-                activity_rows.push(format_activity_row(tick, product, snapshot, mark_price, pnl));
+                activity_rows.push(format_activity_row(
+                    tick, product, snapshot, mark_price, pnl,
+                ));
             }
         }
 
@@ -607,8 +607,26 @@ fn position_limit(symbol: &str) -> i64 {
         "VEV_5500" => 300,
         "VEV_6000" => 300,
         "VEV_6500" => 300,
+        _ if is_round5_product(symbol) => 10,
         _ => DEFAULT_POSITION_LIMIT,
     }
+}
+
+fn is_round5_product(symbol: &str) -> bool {
+    [
+        "GALAXY_SOUNDS_",
+        "SLEEP_POD_",
+        "MICROCHIP_",
+        "PEBBLES_",
+        "ROBOT_",
+        "UV_VISOR_",
+        "TRANSLATOR_",
+        "PANEL_",
+        "OXYGEN_SHAKE_",
+        "SNACKPACK_",
+    ]
+    .iter()
+    .any(|prefix| symbol.starts_with(prefix))
 }
 
 fn match_orders_for_symbol(
@@ -902,6 +920,8 @@ fn match_orders_for_symbol_raw_csv_tape(
         }
     }
 
+    let passthrough_public_market_trades = config.raw_csv_market_trades == "full";
+
     for trade in market_trades {
         if trade.quantity <= 0 {
             continue;
@@ -941,12 +961,16 @@ fn match_orders_for_symbol_raw_csv_tape(
             config.price_slippage_bps,
         );
 
-        let residual_public_quantity = synthetic_bid_remaining.min(synthetic_ask_remaining);
-        if residual_public_quantity > 0 {
+        let public_quantity = if passthrough_public_market_trades {
+            trade.quantity
+        } else {
+            synthetic_bid_remaining.min(synthetic_ask_remaining)
+        };
+        if public_quantity > 0 {
             public_market_trades.push(Trade {
                 symbol: symbol.to_string(),
                 price: trade.price,
-                quantity: residual_public_quantity,
+                quantity: public_quantity,
                 buyer: trade.buyer.clone(),
                 seller: trade.seller.clone(),
                 timestamp: trade_timestamp,
@@ -1053,7 +1077,11 @@ fn sweep_synthetic_buy_into_liquidity(
                     timestamp,
                 });
                 adjust_position(position, symbol, -fill);
-                adjust_cash(cash_by_product, symbol, execution_price as f64 * fill as f64);
+                adjust_cash(
+                    cash_by_product,
+                    symbol,
+                    execution_price as f64 * fill as f64,
+                );
                 resting_asks[index].quantity -= fill;
                 *synthetic_remaining -= fill;
             }
@@ -1659,6 +1687,10 @@ fn matching_json_value(config: &MatchingConfig) -> Result<Value> {
         ),
         ("queue_penetration", json_f64(config.queue_penetration)?),
         ("price_slippage_bps", json_f64(config.price_slippage_bps)?),
+        (
+            "raw_csv_market_trades",
+            Value::String(config.raw_csv_market_trades.clone()),
+        ),
     ]))
 }
 
@@ -1709,6 +1741,7 @@ mod tests {
         market_trade_duplicates_touch, match_orders_for_symbol,
         match_orders_for_symbol_raw_csv_tape, project_root, python_round_to_digits,
         python_round_to_i64, queue_penetration_available, run_backtest, slippage_adjusted_price,
+        position_limit,
     };
     use crate::model::{
         MarketTrade, MatchingConfig, NormalizedDataset, ObservationState, Order, OrderBookLevel,
@@ -2008,10 +2041,8 @@ mod tests {
 
     #[test]
     fn product_specific_limits_allow_positions_up_to_cap() {
-        let position = IndexMap::from([
-            ("EMERALDS".to_string(), 75),
-            ("TOMATOES".to_string(), -75),
-        ]);
+        let position =
+            IndexMap::from([("EMERALDS".to_string(), 75), ("TOMATOES".to_string(), -75)]);
         let orders_by_symbol = IndexMap::from([
             (
                 "EMERALDS".to_string(),
@@ -2040,10 +2071,8 @@ mod tests {
 
     #[test]
     fn product_specific_limits_reject_orders_beyond_cap() {
-        let position = IndexMap::from([
-            ("EMERALDS".to_string(), 75),
-            ("TOMATOES".to_string(), -75),
-        ]);
+        let position =
+            IndexMap::from([("EMERALDS".to_string(), 75), ("TOMATOES".to_string(), -75)]);
         let orders_by_symbol = IndexMap::from([
             (
                 "EMERALDS".to_string(),
@@ -2146,6 +2175,118 @@ mod tests {
         assert!(messages[0].contains("200"));
         assert!(messages[1].contains("200"));
         assert!(messages[2].contains("300"));
+    }
+
+    #[test]
+    fn round5_products_use_limit_ten() {
+        let round5_products = [
+            "GALAXY_SOUNDS_DARK_MATTER",
+            "GALAXY_SOUNDS_BLACK_HOLES",
+            "GALAXY_SOUNDS_PLANETARY_RINGS",
+            "GALAXY_SOUNDS_SOLAR_WINDS",
+            "GALAXY_SOUNDS_SOLAR_FLAMES",
+            "SLEEP_POD_SUEDE",
+            "SLEEP_POD_LAMB_WOOL",
+            "SLEEP_POD_POLYESTER",
+            "SLEEP_POD_NYLON",
+            "SLEEP_POD_COTTON",
+            "MICROCHIP_CIRCLE",
+            "MICROCHIP_OVAL",
+            "MICROCHIP_SQUARE",
+            "MICROCHIP_RECTANGLE",
+            "MICROCHIP_TRIANGLE",
+            "PEBBLES_XS",
+            "PEBBLES_S",
+            "PEBBLES_M",
+            "PEBBLES_L",
+            "PEBBLES_XL",
+            "ROBOT_VACUUMING",
+            "ROBOT_MOPPING",
+            "ROBOT_DISHES",
+            "ROBOT_LAUNDRY",
+            "ROBOT_IRONING",
+            "UV_VISOR_YELLOW",
+            "UV_VISOR_AMBER",
+            "UV_VISOR_ORANGE",
+            "UV_VISOR_RED",
+            "UV_VISOR_MAGENTA",
+            "TRANSLATOR_SPACE_GRAY",
+            "TRANSLATOR_ASTRO_BLACK",
+            "TRANSLATOR_ECLIPSE_CHARCOAL",
+            "TRANSLATOR_GRAPHITE_MIST",
+            "TRANSLATOR_VOID_BLUE",
+            "PANEL_1X2",
+            "PANEL_2X2",
+            "PANEL_1X4",
+            "PANEL_2X4",
+            "PANEL_4X4",
+            "OXYGEN_SHAKE_MORNING_BREATH",
+            "OXYGEN_SHAKE_EVENING_BREATH",
+            "OXYGEN_SHAKE_MINT",
+            "OXYGEN_SHAKE_CHOCOLATE",
+            "OXYGEN_SHAKE_GARLIC",
+            "SNACKPACK_CHOCOLATE",
+            "SNACKPACK_VANILLA",
+            "SNACKPACK_PISTACHIO",
+            "SNACKPACK_STRAWBERRY",
+            "SNACKPACK_RASPBERRY",
+        ];
+
+        for product in round5_products {
+            assert_eq!(position_limit(product), 10, "{product} should have limit 10");
+        }
+
+        let position = IndexMap::from([
+            ("GALAXY_SOUNDS_DARK_MATTER".to_string(), 9),
+            ("SNACKPACK_RASPBERRY".to_string(), -9),
+        ]);
+        let allowed_orders = IndexMap::from([
+            (
+                "GALAXY_SOUNDS_DARK_MATTER".to_string(),
+                vec![Order {
+                    symbol: "GALAXY_SOUNDS_DARK_MATTER".to_string(),
+                    price: 10_000,
+                    quantity: 1,
+                }],
+            ),
+            (
+                "SNACKPACK_RASPBERRY".to_string(),
+                vec![Order {
+                    symbol: "SNACKPACK_RASPBERRY".to_string(),
+                    price: 10_000,
+                    quantity: -1,
+                }],
+            ),
+        ]);
+
+        let (filtered, messages) = enforce_position_limits(&position, allowed_orders);
+        assert!(messages.is_empty());
+        assert_eq!(filtered.len(), 2);
+
+        let rejected_orders = IndexMap::from([
+            (
+                "GALAXY_SOUNDS_DARK_MATTER".to_string(),
+                vec![Order {
+                    symbol: "GALAXY_SOUNDS_DARK_MATTER".to_string(),
+                    price: 10_000,
+                    quantity: 2,
+                }],
+            ),
+            (
+                "SNACKPACK_RASPBERRY".to_string(),
+                vec![Order {
+                    symbol: "SNACKPACK_RASPBERRY".to_string(),
+                    price: 10_000,
+                    quantity: -2,
+                }],
+            ),
+        ]);
+
+        let (filtered, messages) = enforce_position_limits(&position, rejected_orders);
+        assert!(filtered.is_empty());
+        assert_eq!(messages.len(), 2);
+        assert!(messages[0].contains("10"));
+        assert!(messages[1].contains("10"));
     }
 
     #[test]

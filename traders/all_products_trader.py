@@ -36,6 +36,19 @@ class Trader:
         "VEV_6000": 300,
         "VEV_6500": 300,
     }
+    ROUND5_PREFIXES = (
+        "GALAXY_SOUNDS_",
+        "SLEEP_POD_",
+        "MICROCHIP_",
+        "PEBBLES_",
+        "ROBOT_",
+        "UV_VISOR_",
+        "TRANSLATOR_",
+        "PANEL_",
+        "OXYGEN_SHAKE_",
+        "SNACKPACK_",
+    )
+    ROUND5_LIMIT = 10
     DEFAULT_LIMIT = 100
     TEST_SIZE = 1
 
@@ -44,7 +57,7 @@ class Trader:
 
         for product, order_depth in state.order_depths.items():
             position = int(state.position.get(product, 0))
-            limit = self.LIMITS.get(product, self.DEFAULT_LIMIT)
+            limit = self.limit_for(product)
             orders_by_product[product] = self.cross_visible_book(
                 product,
                 order_depth,
@@ -53,6 +66,13 @@ class Trader:
             )
 
         return orders_by_product, 0, ""
+
+    def limit_for(self, product: str) -> int:
+        if product in self.LIMITS:
+            return self.LIMITS[product]
+        if product.startswith(self.ROUND5_PREFIXES):
+            return self.ROUND5_LIMIT
+        return self.DEFAULT_LIMIT
 
     def cross_visible_book(
         self,

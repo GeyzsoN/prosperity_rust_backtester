@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.5.0 - 2026-04-28
+
+### Added
+
+- Bundle the raw IMC round 5 day CSVs under `datasets/round5/` with the official filenames from the latest round 5 download.
+
+### Changed
+
+- Enforce the official round 5 position limit of `10` for all fifty round 5 products in the Rust engine.
+- Update the bundled Python traders so round 5 products also use the official limit of `10`.
+- Expose `--raw-csv-market-trades` so raw CSV replays can either keep only residual public market trades or pass through the full raw public tape.
+- Tighten the crate packaging allowlist to publish only the official bundled dataset files instead of any stray local files under round dataset folders.
+- Make round 5 the default zero-argument dataset now that it is the latest populated bundled round.
+- Update the README and crate metadata for the round 5 dataset bundle.
+
 ## v0.4.9 - 2026-04-26
 
 ### Changed
